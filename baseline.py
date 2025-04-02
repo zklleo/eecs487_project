@@ -1,18 +1,9 @@
-import os
-import json
-import time
-from typing import List, Dict, Any, Set, Tuple
-from tqdm import tqdm
+import re
 import numpy as np
+from typing import List
 from sklearn.metrics.pairwise import cosine_similarity
 from langchain.docstore.document import Document
-from dataloader import HotpotQALoader
 from embedding import OllamaEmbeddings
-from generation import OllamaGeneration
-
-# Import the official evaluation functions
-from evaluation import run_and_evaluate_methods, save_evaluation_results
-
 
 class BaselineRetrieval:
     """
@@ -28,7 +19,8 @@ class BaselineRetrieval:
         """
         self.embedding_model = embedding_model or OllamaEmbeddings()
         
-    def cosine_similarity_retrieval(self, query: str, documents: List[Document], top_k: int = 2) -> List[Document]:
+    def cosine_similarity_retrieval(self, query: str, documents: List[Document],
+                                    top_k: int = 2) -> List[Document]:
         """
         Retrieve documents using cosine similarity.
         
@@ -51,7 +43,7 @@ class BaselineRetrieval:
         
         # Calculate similarities
         similarities = cosine_similarity(
-            [query_embedding], 
+            [query_embedding],
             doc_embeddings
         )[0]
         
@@ -61,7 +53,7 @@ class BaselineRetrieval:
         # Return top-k documents
         return [documents[idx] for idx in top_indices]
     
-    def mmr_retrieval(self, query: str, documents: List[Document], top_k: int = 2, 
+    def mmr_retrieval(self, query: str, documents: List[Document], top_k: int = 2,
                       lambda_param: float = 0.5) -> List[Document]:
         """
         Retrieve documents using Maximal Marginal Relevance (MMR).
@@ -86,7 +78,7 @@ class BaselineRetrieval:
         
         # Calculate similarities
         similarities = cosine_similarity(
-            [query_embedding], 
+            [query_embedding],
             doc_embeddings
         )[0]
         
@@ -126,74 +118,75 @@ class BaselineRetrieval:
         
         # Return selected documents
         return [documents[idx] for idx in selected_indices]
-
-def run_official_evaluation(examples, max_examples=None):
-    """
-    Run evaluation with official HotpotQA metrics.
     
-    Args:
-        examples: List of (question_info, documents) tuples
-        max_examples: Maximum number of examples to evaluate
+    def hybrid_retrieval(self, query: str, documents: List[Document], top_k: int = 2,
+                         lambda_param: float = 0.5) -> List[Document]:
+        """
+        Retrieve documents using a hybrid approach combining dense vector similarity,
+        MMR for diversity, and keyword-based matching for query terms.
         
-    Returns:
-        Official evaluation results
-    """
-    if max_examples:
-        examples = examples[:max_examples]
-    
-    # Initialize retriever
-    retriever = BaselineRetrieval()
-    
-    # Define methods to evaluate
-    methods = {
-        "cosine_similarity": retriever.cosine_similarity_retrieval,
-        "mmr": retriever.mmr_retrieval
-    }
-    
-    # Run and evaluate with official metrics
-    print("\n==== Evaluating with Official HotpotQA Metrics ====")
-    retrieval_results, official_results = run_and_evaluate_methods(examples, methods)
-    
-    # Print official results
-    print("\n----- Official HotpotQA Metrics Results -----")
-    
-    for method, metrics in official_results.items():
-        print(f"\n{method.replace('_', ' ').title()}:")
-        print(f"  Supporting Facts EM: {metrics['sp_em']:.4f}")
-        print(f"  Supporting Facts F1: {metrics['sp_f1']:.4f}")
-        print(f"  Supporting Facts Precision: {metrics['sp_precision']:.4f}")
-        print(f"  Supporting Facts Recall: {metrics['sp_recall']:.4f}")
-    
-    # Calculate improvement percentages
-    cosine_f1 = official_results.get("cosine_similarity", {}).get("sp_f1", 0)
-    mmr_f1 = official_results.get("mmr", {}).get("sp_f1", 0)
-    
-    if cosine_f1 > 0:
-        mmr_improvement = ((mmr_f1 / cosine_f1) - 1) * 100
-        print(f"\nImprovements in F1 Score:")
-        print(f"  MMR vs Cosine: {mmr_improvement:.2f}%")
-    
-    return official_results
-
-def main():
-    # Load HotpotQA dataset with the correct structure
-    loader = HotpotQALoader()
-    examples = loader.get_examples_with_contexts('dev', max_samples=50)  # You can adjust sample size
-    
-    print(f"Loaded {len(examples)} examples")
-    
-    # Run evaluation
-    start_time = time.time()
-    official_results = run_official_evaluation(examples)
-    end_time = time.time()
-    
-    print(f"\nEvaluation completed in {end_time - start_time:.2f} seconds")
-    
-    # Save results
-    os.makedirs('results', exist_ok=True)
-    save_evaluation_results(official_results, 'results/baseline_official_results.json')
-    
-    print("\nResults saved to results/baseline_official_results.json")
-
-if __name__ == "__main__":
-    main()
+        Args:
+            query: The query string.
+            documents: List of documents to search through.
+            top_k: Number of documents to retrieve.
+            lambda_param: Trade-off between relevance and diversity (0-1) for MMR.
+            
+        Returns:
+            List of top_k documents selected by the hybrid retrieval method.
+        """
+        print(f"Using Hybrid retrieval to retrieve {top_k} documents for query: {query}")
+        
+        # Get query embedding
+        query_embedding = self.embedding_model.embed_query(query)
+        
+        # Get document embeddings
+        doc_texts = [doc.page_content for doc in documents]
+        doc_embeddings = self.embedding_model.embed_documents(doc_texts)
+        
+        # Calculate embedding similarities
+        similarities = cosine_similarity([query_embedding], doc_embeddings)[0]
+        
+        # Calculate keyword-based scores (lexical overlap with query terms)
+        query_terms = set(re.findall(r"\w+", query.lower()))
+        lexical_scores = []
+        for doc in documents:
+            doc_terms = set(re.findall(r"\w+", doc.page_content.lower()))
+            match_count = len(query_terms.intersection(doc_terms))
+            lexical_fraction = match_count / len(query_terms) if query_terms else 0
+            lexical_scores.append(lexical_fraction)
+        lexical_scores = np.array(lexical_scores)
+        
+        # Combine dense similarity with lexical overlap (simple sum fusion)
+        combined_scores = similarities + lexical_scores
+        
+        # Hybrid MMR selection
+        selected_indices = []
+        remaining_indices = list(range(len(documents)))
+        
+        for _ in range(min(top_k, len(documents))):
+            if not remaining_indices:
+                break
+            
+            if not selected_indices:
+                # Select the document with highest combined score first
+                best_idx = remaining_indices[np.argmax([combined_scores[idx] for idx in remaining_indices])]
+            else:
+                # Calculate MMR score for remaining documents using combined query similarity
+                mmr_scores = []
+                selected_embeddings = [doc_embeddings[idx] for idx in selected_indices]
+                
+                for idx in remaining_indices:
+                    sim_query = combined_scores[idx]
+                    sim_docs = cosine_similarity([doc_embeddings[idx]], selected_embeddings)[0]
+                    max_sim_doc = max(sim_docs) if sim_docs.size > 0 else 0
+                    # MMR formula: balance combined relevance vs. similarity to already selected docs
+                    mmr_score = lambda_param * sim_query - (1 - lambda_param) * max_sim_doc
+                    mmr_scores.append(mmr_score)
+                
+                best_idx = remaining_indices[np.argmax(mmr_scores)]
+            
+            selected_indices.append(best_idx)
+            remaining_indices.remove(best_idx)
+        
+        # Return top-k selected documents
+        return [documents[idx] for idx in selected_indices]

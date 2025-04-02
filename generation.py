@@ -1,14 +1,15 @@
 import requests
 import json
 import logging
-from typing import Dict, Any, Optional
+from typing import Dict, Any, Optional, List
+from langchain.docstore.document import Document
 
 logger = logging.getLogger(__name__)
 
 class OllamaGeneration:
     """Class for generating text using Ollama models."""
     
-    def __init__(self, model_name="qwen2.5:7b", base_url="http://localhost:11434"):
+    def __init__(self, model_name="qwen2.5:14b", base_url="http://localhost:11434"):
         """
         Initialize the Ollama generation client.
         
@@ -75,7 +76,7 @@ class OllamaGeneration:
             logger.error(f"Error in text generation: {e}")
             return f"Error generating response: {str(e)}"
 
-    def generate_rag_response(self, question: str, context_docs: list) -> str:
+    def generate_rag_response(self, question: str, context_docs: List[Document]) -> str:
         """
         Generate a response based on retrieved documents.
         
@@ -84,7 +85,7 @@ class OllamaGeneration:
             context_docs: List of retrieved documents
             
         Returns:
-            The generated answer
+            The generated answer as YES, NO, or a span from the context
         """
         # Construct context from retrieved documents
         context = "\n\n".join([
@@ -94,7 +95,10 @@ class OllamaGeneration:
         
         # System prompt for RAG
         system_prompt = """You are a helpful assistant that answers questions based on the provided context. 
-If the context doesn't contain enough information to answer the question, state that you cannot answer based on the provided information."""
+For yes/no questions, respond only with 'yes' or 'no' in lowercase.
+If the answer is a specific piece of information from the context, extract just that information.
+If the context doesn't contain enough information to answer the question, respond with 'no answer' in lowercase.
+Be precise and concise."""
         
         # User prompt combining question and context
         user_prompt = f"""Question: {question}
@@ -102,7 +106,46 @@ If the context doesn't contain enough information to answer the question, state 
 Context:
 {context}
 
-Based on the provided context, please answer the question concisely and accurately."""
+Based solely on the provided context, answer the question.
+Your answer must be in one of these formats:
+1. 'yes' (for affirmative answers)
+2. 'no' (for negative answers)
+3. Specific text span from the context (for factual information)
+4. 'no answer' (if the context doesn't provide sufficient information)
+
+All responses should be in lowercase.
+
+Output only the answer, without explanation."""
         
-        # Generate response
-        return self.generate(user_prompt, system_prompt=system_prompt, temperature=0.3)
+        # Generate response with low temperature for factual consistency
+        raw_response = self.generate(user_prompt, system_prompt=system_prompt, temperature=0.1)
+        
+        # Process and normalize the response
+        normalized_response = self._normalize_response(raw_response)
+        
+        return normalized_response
+    
+    def _normalize_response(self, response: str) -> str:
+        """
+        Normalize the model response to ensure it follows the expected format.
+        
+        Args:
+            response: The raw model response
+            
+        Returns:
+            Normalized response (YES, NO, or answer span)
+        """
+        # Clean up the response
+        response = response.strip()
+        
+        # Convert to lowercase for YES/NO responses
+        if response.lower() in ['yes', 'no']:
+            return response.lower()
+        
+        # Check for NO ANSWER variations
+        no_answer_phrases = ['no answer', 'cannot answer', 'don\'t know', 'insufficient information']
+        if any(phrase in response.lower() for phrase in no_answer_phrases):
+            return "no answer"
+        
+        # Otherwise, return the answer span as is
+        return response
