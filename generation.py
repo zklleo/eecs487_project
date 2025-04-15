@@ -75,6 +75,35 @@ class OllamaGeneration:
         except Exception as e:
             logger.error(f"Error in text generation: {e}")
             return f"Error generating response: {str(e)}"
+        
+    def generate_response(self, question: str) -> str:
+        """
+        Generate an answer to a question using the Ollama model.
+        
+        Args:
+            question: The question to answer
+            
+        Returns:
+            The generated answer
+        """
+        # System prompt for RAG
+        system_prompt = """You are a helpful assistant that answers questions."""
+        user_prompt = f"""Question: {question}
+Your answer must be in one of these formats:
+1. 'yes' (for affirmative answers)
+2. 'no' (for negative answers)
+3. Specific text span from the context (for factual information)
+
+All responses should be in lowercase.
+
+Output only the answer, without explanation."""
+        
+        raw_response = self.generate(user_prompt, system_prompt=system_prompt, temperature=0.1)
+        
+        # Process and normalize the response
+        normalized_response = self._normalize_response(raw_response)
+        
+        return normalized_response
 
     def generate_rag_response(self, question: str, context_docs: List[Document]) -> str:
         """

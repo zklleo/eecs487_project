@@ -140,10 +140,11 @@ def run_qa_system(args):
     retrieval_methods = {
         "cosine": retriever.cosine_similarity_retrieval,
         "mmr": retriever.mmr_retrieval,
-        "hybrid": retriever.hybrid_retrieval
+        "hybrid": retriever.hybrid_retrieval,
+        "none": None  # Added baseline option
     }
-    
-    retrieval_func = retrieval_methods.get(args.retrieval_method, retriever.cosine_similarity_retrieval)
+
+    retrieval_func = retrieval_methods.get(args.retrieval_method)
     
     # Process examples
     predictions = {}
@@ -153,24 +154,23 @@ def run_qa_system(args):
         
         logger.info(f"Processing question {i+1}/{len(examples)}: {question}")
         
-        # Retrieve relevant documents
-        retrieved_docs = retrieval_func(question, documents, top_k=args.top_k)
-        
-        # Generate answer
-        answer = generator.generate_rag_response(question, retrieved_docs)
-        
+        if retrieval_func:
+            retrieved_docs = retrieval_func(question, documents, top_k=args.top_k)
+            answer = generator.generate_rag_response(question, retrieved_docs)
+            # Print the results in a more visible format
+            print("\n" + "="*80)
+            print(f"Question {i+1}: {question}")
+            print("-"*80)
+            print(f"Retrieved documents:")
+            for j, doc in enumerate(retrieved_docs):
+                print(f"  Doc {j+1}: {doc.metadata.get('title', 'Unknown')} - {doc.page_content[:100]}...")
+            print("-"*80)
+            print(f"Model output: {answer}")
+        else:
+            answer = generator.generate_response(question)
+
         # Store the prediction
         predictions[question_id] = answer
-        
-        # Print the results in a more visible format
-        print("\n" + "="*80)
-        print(f"Question {i+1}: {question}")
-        print("-"*80)
-        print(f"Retrieved documents:")
-        for j, doc in enumerate(retrieved_docs):
-            print(f"  Doc {j+1}: {doc.metadata.get('title', 'Unknown')} - {doc.page_content[:100]}...")
-        print("-"*80)
-        print(f"Model output: {answer}")
         
         if "answer" in question_info and question_info["answer"]:
             print(f"Ground truth: {question_info['answer']}")
@@ -231,7 +231,7 @@ def main():
     
     # Retrieval arguments
     parser.add_argument("--retrieval_method", type=str, default="all", 
-                        choices=["cosine", "mmr", "hybrid", "all"],
+                        choices=["cosine", "mmr", "hybrid", "all", "none"],
                         help="Document retrieval method to use (or 'all' to compare)")
     parser.add_argument("--top_k", type=int, default=2,
                         help="Number of documents to retrieve")
