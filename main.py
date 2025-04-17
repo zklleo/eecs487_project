@@ -10,6 +10,7 @@ from dataloader import HotpotQALoader
 from baseline import BaselineRetrieval
 from generation import OllamaGeneration
 from embedding import OllamaEmbeddings
+from efficientRAG_loader import convert_to_documents, load_efficientrag_negsample_dataset
 
 # Set up logging
 logging.basicConfig(
@@ -87,7 +88,11 @@ def evaluate_predictions(predictions: Dict[str, str], ground_truth: List[Dict[st
     f1_scores = []
     
     # Create a mapping from question ID to ground truth answer
-    gt_answers = {item["_id"]: item["answer"] for item in ground_truth}
+    gt_answers = {
+        item.get("_id", item.get("id")): item["answer"]
+        for item in ground_truth
+        if "answer" in item
+    }
     
     for qid, pred in predictions.items():
         if qid in gt_answers:
@@ -126,16 +131,22 @@ def run_qa_system(args):
     """
     logger.info(f"Starting QA system with {args.retrieval_method} retrieval method")
     
+
     # Initialize components
     data_loader = HotpotQALoader(data_dir=args.data_dir)
     embedding_model = OllamaEmbeddings(model_name=args.model_name, base_url=args.ollama_url)
     retriever = BaselineRetrieval(embedding_model=embedding_model)
     generator = OllamaGeneration(model_name=args.model_name, base_url=args.ollama_url)
     
+    
     # Load examples
     logger.info(f"Loading {args.split} split data with max {args.max_samples} samples")
-    examples = data_loader.get_examples_with_contexts(split=args.split, max_samples=args.max_samples)
-    
+    if args.efficientrag_file:
+        if "negsample" in args.efficientrag_file.lower():
+            examples = load_efficientrag_negsample_dataset(args.efficientrag_file, max_samples=args.max_samples)
+    else:
+        examples = data_loader.get_examples_with_contexts(split=args.split, max_samples=args.max_samples)
+
     # Choose retrieval method
     retrieval_methods = {
         "cosine": retriever.cosine_similarity_retrieval,
@@ -148,22 +159,38 @@ def run_qa_system(args):
     
     # Process examples
     predictions = {}
-    for i, (question_info, documents) in enumerate(tqdm(examples, desc="Processing questions")):
+    for i, question_info in enumerate(tqdm(examples, desc="Processing questions")):
         question_id = question_info["id"]
         question = question_info["question"]
-        
+
         logger.info(f"Processing question {i+1}/{len(examples)}: {question}")
-        
+
         if retrieval_func:
+            if args.efficientrag_file or args.negsample_file:
+                # For EfficientRAG dataset, ensure documents are in the correct format
+                if "documents" in question_info:
+                    documents = convert_to_documents(question_info["documents"])
+                else:
+                    documents = []
+                    logger.warning(f"No documents found for question {question_id}")
+            else:
+                documents = data_loader.get_corpus() if "documents" not in question_info else question_info["documents"]
+            
+            # Skip if no documents available
+            if not documents:
+                logger.warning(f"Skipping question {question_id} due to no documents")
+                predictions[question_id] = "No documents available"
+                continue
+                
             retrieved_docs = retrieval_func(question, documents, top_k=args.top_k)
             answer = generator.generate_rag_response(question, retrieved_docs)
-            # Print the results in a more visible format
+
             print("\n" + "="*80)
             print(f"Question {i+1}: {question}")
             print("-"*80)
-            print(f"Retrieved documents:")
+            print("Retrieved documents:")
             for j, doc in enumerate(retrieved_docs):
-                print(f"  Doc {j+1}: {doc.metadata.get('title', 'Unknown')} - {doc.page_content[:100]}...")
+                print(f"  Doc {j+1}: {doc.page_content[:100]}...")
             print("-"*80)
             print(f"Model output: {answer}")
         else:
@@ -200,7 +227,10 @@ def run_qa_system(args):
     
     # Evaluate if we have ground truth answers
     if args.split != "test":
-        metrics = evaluate_predictions(predictions, data_loader.load_split(args.split, args.max_samples))
+        if args.efficientrag_file or args.negsample_file:
+            metrics = evaluate_predictions(predictions, examples)
+        else:
+            metrics = evaluate_predictions(predictions, data_loader.load_split(args.split, args.max_samples))
         
         logger.info(f"Evaluation metrics: {metrics}")
         
@@ -224,7 +254,7 @@ def main():
                         help="Maximum number of samples to process")
     
     # Model arguments
-    parser.add_argument("--model_name", type=str, default="qwen2.5:14b",
+    parser.add_argument("--model_name", type=str, default="qwen2.5:7b",
                         help="Ollama model name to use")
     parser.add_argument("--ollama_url", type=str, default="http://localhost:11434",
                         help="Ollama API URL")
@@ -239,6 +269,12 @@ def main():
     # Output arguments
     parser.add_argument("--output_dir", type=str, default="outputs",
                         help="Directory to save outputs")
+    
+    parser.add_argument("--efficientrag_file", type=str,
+                        help="Optional: Use EfficientRAG filter dataset (jsonl file)")
+    
+    parser.add_argument("--negsample_file", type=str,
+                        help="Optional: Use EfficientRAG negsample dataset (valid.jsonl file)")
     
     args = parser.parse_args()
     
