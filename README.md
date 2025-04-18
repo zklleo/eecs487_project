@@ -44,7 +44,7 @@ python baseline.py
 python custom_retrieval.py
 ```
 
-
+### Remember to download valid.json and put it under a folder called negsample
 ---
 
 ## Project Structure
