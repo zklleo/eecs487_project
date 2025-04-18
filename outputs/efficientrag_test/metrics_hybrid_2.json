@@ -1,6 +1,6 @@
 {
-  "exact_match": 0.29,
-  "f1_score": 0.38451731601731604,
-  "correct": 29,
-  "total": 100
+  "exact_match": 0.2633333333333333,
+  "f1_score": 0.3452307414807415,
+  "correct": 79,
+  "total": 300
 }

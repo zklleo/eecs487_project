@@ -184,7 +184,6 @@ def run_qa_system(args):
                 
             retrieved_docs = retrieval_func(question, documents, top_k=args.top_k)
             answer = generator.generate_rag_response(question, retrieved_docs)
-
             print("\n" + "="*80)
             print(f"Question {i+1}: {question}")
             print("-"*80)
