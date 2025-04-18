@@ -11,7 +11,7 @@ logger = logging.getLogger(__name__)
 class OllamaEmbeddings():
     """Ollama embeddings with fallback to SentenceTransformers."""
     
-    def __init__(self, model_name="qwen2.5:14b", base_url="http://localhost:11434"):
+    def __init__(self, model_name="qwen2.5:7b", base_url="http://localhost:11434"):
         """
         Initialize the Ollama embeddings client with a fallback to SentenceTransformers.
         

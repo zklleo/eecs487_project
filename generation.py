@@ -9,7 +9,7 @@ logger = logging.getLogger(__name__)
 class OllamaGeneration:
     """Class for generating text using Ollama models."""
     
-    def __init__(self, model_name="qwen2.5:14b", base_url="http://localhost:11434"):
+    def __init__(self, model_name="qwen2.5:7b", base_url="http://localhost:11434"):
         """
         Initialize the Ollama generation client.
         
