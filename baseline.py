@@ -120,7 +120,7 @@ class BaselineRetrieval:
         return [documents[idx] for idx in selected_indices]
     
     def hybrid_retrieval(self, query: str, documents: List[Document], top_k: int = 2,
-                         lambda_param: float = 0.5) -> List[Document]:
+                         lambda_param: float = 0.7) -> List[Document]:
         """
         Retrieve documents using a hybrid approach combining dense vector similarity,
         MMR for diversity, and keyword-based matching for query terms.
