@@ -66,3 +66,64 @@ def load_efficientrag_negsample_dataset(filepath: str, max_samples: int = None):
             })
 
     return examples
+
+def load_efficientrag_filtered_dataset(filtered_file: str, original_file: str, max_samples: int = None):
+    """
+    Load and process the EfficientRAG filtered dataset along with the original dataset.
+    
+    Args:
+        filtered_file: Path to the filtered query jsonl file
+        original_file: Path to the original dataset jsonl file with full contexts
+        max_samples: Maximum number of samples to load
+        
+    Returns:
+        List of processed examples with filtered questions and original contexts/answers
+    """
+    examples = []
+    
+    # Load filtered questions
+    filtered_data = {}
+    with open(filtered_file, "r") as f:
+        for i, line in enumerate(f):
+            if max_samples and i >= max_samples:
+                break
+                
+            entry = json.loads(line)
+            question_id = entry.get("id", f"filtered_{i}")
+            filtered_data[question_id] = {
+                "filtered_question": entry.get("question", ""),
+                "id": question_id
+            }
+    
+    # Load original data with contexts and answers
+    with open(original_file, "r") as f:
+        for i, line in enumerate(f):
+            if max_samples and i >= max_samples:
+                break
+                
+            entry = json.loads(line)
+            question_id = entry.get("id", entry.get("_id", f"original_{i}"))
+            
+            # Only process if we have a corresponding filtered question
+            if question_id in filtered_data:
+                # Extract the documents/context from original data
+                contexts = []
+                if "supporting_facts" in entry:
+                    # HotpotQA format
+                    for title, sentences in entry.get("context", []):
+                        context = " ".join(sentences)
+                        contexts.append(f"{title}: {context}")
+                elif "context" in entry:
+                    # Direct context field
+                    contexts = entry["context"] if isinstance(entry["context"], list) else [entry["context"]]
+                
+                # Combine with filtered question data
+                examples.append({
+                    "id": question_id,
+                    "question": filtered_data[question_id]["filtered_question"],
+                    "original_question": entry.get("question", ""),
+                    "answer": entry.get("answer", ""),
+                    "documents": contexts
+                })
+    
+    return examples

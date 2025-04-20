@@ -10,7 +10,7 @@ from dataloader import HotpotQALoader
 from baseline import BaselineRetrieval
 from generation import OllamaGeneration
 from embedding import OllamaEmbeddings
-from efficientRAG_loader import convert_to_documents, load_efficientrag_negsample_dataset
+from efficientRAG_loader import convert_to_documents, load_efficientrag_negsample_dataset, load_efficientrag_filtered_dataset
 
 # Set up logging
 logging.basicConfig(
@@ -141,7 +141,14 @@ def run_qa_system(args):
     
     # Load examples
     logger.info(f"Loading {args.split} split data with max {args.max_samples} samples")
-    if args.efficientrag_file:
+    if args.filtered_query_file and args.original_dataset_file:
+        examples = load_efficientrag_filtered_dataset(
+            filtered_file=args.filtered_query_file,
+            original_file=args.original_dataset_file,
+            max_samples=args.max_samples
+        )
+        logger.info(f"Loaded {len(examples)} examples from filtered query dataset")
+    elif args.efficientrag_file:
         if "negsample" in args.efficientrag_file.lower():
             examples = load_efficientrag_negsample_dataset(args.efficientrag_file, max_samples=args.max_samples)
     else:
@@ -165,7 +172,31 @@ def run_qa_system(args):
 
         logger.info(f"Processing question {i+1}/{len(examples)}: {question}")
 
-        if retrieval_func:
+        # For filtered queries, we just send the question to LLM without retrieval
+        if args.filtered_query_file and args.original_dataset_file:
+            # Use the documents from the original dataset for context (optional)
+            if retrieval_func and args.use_original_context:
+                documents = convert_to_documents(question_info["documents"])
+                retrieved_docs = retrieval_func(question, documents, top_k=args.top_k)
+                answer = generator.generate_rag_response(question, retrieved_docs)
+                
+                print("\n" + "="*80)
+                print(f"Question {i+1}: {question}")
+                print("-"*80)
+                print("Retrieved documents from original dataset:")
+                for j, doc in enumerate(retrieved_docs):
+                    print(f"  Doc {j+1}: {doc.page_content[:100]}...")
+                print("-"*80)
+                print(f"Model output: {answer}")
+            else:
+                # Direct question to LLM without context
+                answer = generator.generate_response(question)
+                
+                print("\n" + "="*80)
+                print(f"Question {i+1}: {question}")
+                print("-"*80)
+                print(f"Model output (no context): {answer}")
+        elif retrieval_func:
             if args.efficientrag_file or args.negsample_file:
                 # For EfficientRAG dataset, ensure documents are in the correct format
                 if "documents" in question_info:
@@ -225,8 +256,11 @@ def run_qa_system(args):
     logger.info(f"Saved predictions to {output_file}")
     
     # Evaluate if we have ground truth answers
-    if args.split != "test":
-        if args.efficientrag_file or args.negsample_file:
+    if args.split != "test" or (args.filtered_query_file and args.original_dataset_file):
+        if args.filtered_query_file and args.original_dataset_file:
+            # When using filtered queries, evaluate against the original answers
+            metrics = evaluate_predictions(predictions, examples)
+        elif args.efficientrag_file or args.negsample_file:
             metrics = evaluate_predictions(predictions, examples)
         else:
             metrics = evaluate_predictions(predictions, data_loader.load_split(args.split, args.max_samples))
@@ -239,6 +273,8 @@ def run_qa_system(args):
             json.dump(metrics, f, indent=2)
         
         logger.info(f"Saved metrics to {metrics_file}")
+        
+        return metrics
 
 def main():
     """Main entry point."""
@@ -275,6 +311,16 @@ def main():
     parser.add_argument("--negsample_file", type=str,
                         help="Optional: Use EfficientRAG negsample dataset (valid.jsonl file)")
     
+    # Add new arguments for filtered query evaluation
+    parser.add_argument("--filtered_query_file", type=str,
+                        help="Path to the filtered query dataset jsonl file")
+    
+    parser.add_argument("--original_dataset_file", type=str,
+                        help="Path to the original dataset jsonl file with contexts and answers")
+    
+    parser.add_argument("--use_original_context", action="store_true",
+                        help="Use original context for filtered queries (with retrieval)")
+    
     args = parser.parse_args()
     
     # If user requested all methods, run them one by one
@@ -296,6 +342,37 @@ def main():
             # Run the QA system with this method
             metrics = run_qa_system(method_args)
             all_metrics[method] = metrics
+            
+        # Also run with no retrieval for filtered queries
+        if args.filtered_query_file and args.original_dataset_file:
+            print("\n" + "#"*90)
+            print(f"RUNNING WITHOUT RETRIEVAL (DIRECT LLM ONLY)")
+            print("#"*90 + "\n")
+            
+            # Create a copy of args with no retrieval
+            no_retrieval_args = argparse.Namespace(**vars(args))
+            no_retrieval_args.retrieval_method = "none"
+            no_retrieval_args.use_original_context = False
+            
+            # Run the QA system without retrieval
+            metrics = run_qa_system(no_retrieval_args)
+            all_metrics["none"] = metrics
+        
+        # Compare and summarize all metrics
+        print("\n" + "="*90)
+        print("COMPARISON OF ALL RETRIEVAL METHODS")
+        print("="*90)
+        
+        for method, metrics in all_metrics.items():
+            if metrics:
+                print(f"{method.upper()}: Exact Match = {metrics.get('exact_match', 0):.4f}, F1 = {metrics.get('f1_score', 0):.4f}")
+        
+        # Save overall comparison
+        comparison_file = os.path.join(args.output_dir, "retrieval_comparison.json")
+        with open(comparison_file, "w") as f:
+            json.dump(all_metrics, f, indent=2)
+        
+        logger.info(f"Saved method comparison to {comparison_file}")
     else:
         # Run with the specified method
         run_qa_system(args)
