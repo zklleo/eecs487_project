@@ -14,9 +14,7 @@ pip install langchain langchain_community numpy scikit-learn tqdm sentence-trans
 
 ### 2. Download HotpotQA Dataset
 
-```bash
 download dataset from [HotpotQA](https://hotpotqa.github.io/)
-```
 
 ### 3. Install and Run Ollama
 
