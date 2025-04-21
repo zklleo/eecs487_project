@@ -15,7 +15,7 @@ pip install langchain langchain_community numpy scikit-learn tqdm sentence-trans
 ### 2. Download HotpotQA Dataset
 
 ```bash
-python main.py
+download dataset from [HotpotQA](https://hotpotqa.github.io/)
 ```
 
 ### 3. Install and Run Ollama
@@ -35,24 +35,16 @@ ollama pull qwen2.5:7b
 ### Evaluate Baseline Retrieval Methods
 
 ```bash
-python baseline.py
-```
-
-### Evaluate Custom Retrieval Method
-
-```bash
-python custom_retrieval.py
+python main.py
 ```
 
 ### Remember to download valid.json and put it under a folder called negsample
 ---
 
 ## Project Structure
-
-- `main.py`: Downloads the HotpotQA dataset.
+- `main.py`: Run Experiments
 - `dataloader.py`: Handles loading and processing HotpotQA data.
 - `embedding.py`: Implements embedding functionality using Ollama with SentenceTransformers fallback.
 - `generation.py`: Provides text generation capabilities for query decomposition.
 - `evaluation.py`: Contains the official HotpotQA evaluation metrics.
 - `baseline.py`: Implements and evaluates baseline retrieval methods.
-- `custom_retrieval.py`: Implements our custom retrieval approach.
